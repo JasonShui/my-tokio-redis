@@ -1,52 +1,55 @@
 use bytes::Bytes;
-use mini_redis::Command::{self, Get, Set};
-use mini_redis::{Connection, Frame};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::net::{TcpListener, TcpStream};
+use mini_redis::client;
+use tokio::sync::mpsc;
 
-type MyRedisDB = Arc<Mutex<HashMap<String, Bytes>>>;
+#[derive(Debug)]
+enum Command {
+    Get { key: String },
+    Set { key: String, val: Bytes },
+}
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let (tx, mut rx) = mpsc::channel(32);
 
-    let db = Arc::new(Mutex::new(HashMap::new()));
+    let tx_clone = tx.clone();
 
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        let db = db.clone();
-        tokio::spawn(async move {
-            process(socket, db).await;
-        });
-    }
-}
+    let recv_mgr = tokio::spawn(async move {
+        let mut client = client::connect("127.0.0.1:6379").await.unwrap();
 
-async fn process(socket: TcpStream, db: MyRedisDB) {
-    let mut connection = Connection::new(socket);
-
-    while let Some(frame) = connection.read_frame().await.unwrap() {
-        let response = match Command::from_frame(frame).unwrap() {
-            Set(cmd) => {
-                db.lock().unwrap().insert(cmd.key().to_string(), cmd.value().clone());
-                println!("recv set cmd {:?}", cmd);
-                Frame::Simple("OK".to_string())
-            }
-            Get(cmd) => {
-                println!("recv get cmd {:?}", cmd);
-                if let Some(value) = db.lock().unwrap().get(cmd.key()) {
-                    Frame::Bulk(value.clone())
-                } else {
-                    Frame::Null
+        while let Some(cmd) = rx.recv().await {
+            match cmd {
+                Command::Get { key } => {
+                    let val = client.get(&key).await.unwrap();
+                    println!("val of key {:?}: {:?}", key, val);
+                }
+                Command::Set { key, val } => {
+                    client.set(&key, val.clone()).await.unwrap();
+                    println!("set (key, val) ({:?} {:?})", key, val);
                 }
             }
-            cmd => {
-                println!("not implemented cmd: {:?}", cmd);
-                Frame::Null
-            }
-        };
+        }
+    });
 
-        println!("curr redis data: {:?}", db);
-        connection.write_frame(&response).await.unwrap();
-    }
+    let t1 = tokio::spawn(async move {
+        tx.send(Command::Get {
+            key: "key1".to_string(),
+        })
+        .await
+        .unwrap();
+    });
+
+    let t2 = tokio::spawn(async move {
+        tx_clone
+            .send(Command::Set {
+                key: "key1".to_string(),
+                val: "world".into(),
+            })
+            .await
+            .unwrap();
+    });
+
+    t1.await.unwrap();
+    t2.await.unwrap();
+    recv_mgr.await.unwrap();
 }
