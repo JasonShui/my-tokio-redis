@@ -1,9 +1,12 @@
 use bytes::Bytes;
 use mini_redis::Command::{self, Get, Set};
-use mini_redis::{Connection, Frame};
+use mini_redis::Frame;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::net::{TcpListener, TcpStream};
+
+mod connection;
+use connection::Connection;
 
 type MyRedisDB = Arc<Mutex<HashMap<String, Bytes>>>;
 

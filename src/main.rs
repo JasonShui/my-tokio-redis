@@ -32,7 +32,7 @@ async fn main() {
                     let res = client.get(&key).await;
                     resp.send(res).unwrap();
                 }
-                Command::Set { key, val , resp} => {
+                Command::Set { key, val, resp } => {
                     let res = client.set(&key, val.clone()).await;
                     resp.send(res).unwrap();
                 }
@@ -64,7 +64,6 @@ async fn main() {
             .await
             .unwrap();
 
-            
         let res = res_rx.await;
         println!("set res {:?}", res);
     });
